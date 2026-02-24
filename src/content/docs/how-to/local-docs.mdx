@@ -1,0 +1,66 @@
+---
+title: Develop Your Docs Locally
+description: Preview your documentation locally before pushing — works with any framework and any deployment stack.
+---
+
+Before registering your docs with the aggregation pipeline, you should verify they build and look right on your machine. The Justfile targets make this the same command regardless of whether you're using MkDocs, Astro, Docusaurus, or anything else.
+
+---
+
+## Prerequisites
+
+- `just` installed — [install guide](https://just.systems)
+- Your docs framework installed (MkDocs, Node.js, etc.)
+- A `docspine.yaml` and `Justfile` in your repo root — see [Register a Docs Microsite](/how-to/register-microsite/)
+
+---
+
+## Serve locally
+
+```bash
+just docs-serve
+```
+
+This starts a local dev server, typically at `http://localhost:8000`. Your docs reload automatically as you edit files.
+
+---
+
+## Validate before pushing
+
+```bash
+just docs-check
+```
+
+Runs your docs build in strict mode — fails on broken links, missing pages, and warnings. This is the same command the aggregation pipeline runs, so if it passes locally, it will pass in CI.
+
+Run this before every push to catch issues early.
+
+---
+
+## Build and inspect the output
+
+```bash
+just docs-build
+```
+
+Produces the static HTML in your `output_dir` (e.g. `site/`). Useful for inspecting the exact output the pipeline will deploy.
+
+```bash
+# Inspect what was built
+ls site/
+# Should contain index.html and your content directories
+```
+
+---
+
+## Workflow
+
+```
+Edit docs  →  just docs-serve  →  review in browser
+                                        ↓
+                              just docs-check  →  fix any warnings
+                                        ↓
+                                    git push  →  pipeline deploys
+```
+
+That's it. The aggregation pipeline takes over from `git push` — no manual deploy step needed.

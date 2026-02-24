@@ -95,7 +95,7 @@ Full documentation is available at **[nondualworks.github.io/docspine](https://n
 - **[Implementation Reference](https://nondualworks.github.io/docspine/deployment/implementation/)** — Pipeline, SST, Concourse, Docker, LocalStack
 - **[Manifest Schema](https://nondualworks.github.io/docspine/reference/manifest-schema/)** — The `docspine.yaml` contract
 - **[Register a Microsite](https://nondualworks.github.io/docspine/how-to/register-microsite/)** — Step-by-step onboarding guide
-- **[Local Development](https://nondualworks.github.io/docspine/how-to/local-development/)** — LocalStack setup for testing
+- **[Develop Your Docs Locally](https://nondualworks.github.io/docspine/how-to/local-docs/)** — Preview and validate docs before pushing
 
 ## Examples
 

@@ -37,7 +37,7 @@ export default defineConfig({
           label: 'How-To Guides',
           items: [
             { label: 'Register a Docs Microsite', slug: 'how-to/register-microsite' },
-            { label: 'Local Development', slug: 'how-to/local-development' },
+            { label: 'Develop Your Docs Locally', slug: 'how-to/local-docs' },
           ],
         },
       ],
