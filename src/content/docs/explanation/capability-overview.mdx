@@ -139,7 +139,7 @@ Static site hosting (S3 + CDN) rather than a running server (nginx, Express) bec
 The initial implementation uses a manually maintained registry (`docs-registry.yaml`) rather than auto-scanning the GitHub org for repos containing `docspine.yaml`. This is deliberate:
 
 - **Explicit is better than implicit**: Teams opt in by opening a PR. No surprise builds.
-- **Control**: PE team reviews what's being added to the shared domain.
+- **Control**: Your platform team reviews what's being added to the shared domain.
 - **Simplicity**: A YAML file is easier to debug than a GitHub API scanner with rate limits and token management.
 
 Auto-discovery is a natural evolution once the pattern proves out with 10+ repos.
@@ -195,15 +195,21 @@ The landing page at `docs.{company}.com/` includes the Pagefind search widget, e
 
 ## The AI Multiplier
 
-A single docs domain per organization creates a natural MCP (Model Context Protocol) endpoint for AI agents. When all service documentation lives under one searchable domain:
+A unified documentation domain is the structural precondition for AI
+integration. When all service documentation lives under one searchable
+domain with consistent Diataxis URL conventions, AI tools can discover
+and consume it without custom integration.
 
-- AI coding assistants can query `docs.{company}.com` to find API references, operational runbooks, and architectural decisions
-- Diataxis-structured content (tutorials, how-to guides, reference, explanation) is machine-readable by convention
-- RAG (Retrieval-Augmented Generation) pipelines have a clean, authoritative corpus to index
+The aggregation pipeline generates an `llms.txt` file alongside the
+landing page, following the [emerging convention](https://llmstxt.org/)
+for AI-readable content discovery. This makes the entire corpus
+discoverable by developer tools (Cursor, Windsurf, Claude Code),
+internal RAG pipelines, and AI assistants — whether the docs are
+public or behind a VPN.
 
-This is not a feature we build — it's a structural property of having all docs in one place with consistent structure. The aggregation pipeline creates the conditions; AI tools consume them.
-
----
+This is not a feature we build — it's a structural consequence of
+having all docs in one place with consistent structure. The
+aggregation pipeline creates the conditions; AI tools consume them.
 
 ## Relationship to Documentation Culture
 

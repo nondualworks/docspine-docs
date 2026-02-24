@@ -13,7 +13,7 @@ Once you register your docs site, you get:
 - **Your docs live at** `docs.{company}.com/{domain}/{service}/`
 - **Auto-deploy on push** — change a file in `docs/`, push to `main`, and the site updates within 5 minutes
 - **Cross-service search** — users can search your docs alongside every other team's docs from a single search bar
-- **Zero infrastructure for you** — no S3 buckets, no CloudFront, no GitHub Pages config. We handle all of it.
+- **Zero infrastructure for you** — no S3 buckets, no CloudFront, no GitHub Pages config. Your platform team handles all of it.
 
 ---
 
@@ -73,7 +73,7 @@ The `domain` field groups your docs on the site. Choose based on what makes sens
 | Data pipelines | `data` |
 | Mobile apps | `mobile` |
 
-If you're unsure, use your team name. We can reorganize later without you changing anything.
+If you're unsure, use your team name. Your platform team can reorganize later without you changing anything.
 
 ---
 
@@ -185,7 +185,7 @@ After the pipeline runs (typically within 5 minutes of the registry merge):
 2. Visit `docs.{company}.com/{domain}/{service}/` — your full docs site
 3. Try the search bar — search for a term you know is in your docs
 
-If your docs don't appear after 10 minutes, check the `#platform-engineering` Slack channel for build failure notifications, or ping us directly.
+If your docs don't appear after 10 minutes, check your platform team's communication channel for build failure notifications.
 
 ---
 
@@ -193,14 +193,14 @@ If your docs don't appear after 10 minutes, check the `#platform-engineering` Sl
 
 After registration, every push to your `main` branch that changes files in your `docs/` directory (or `docspine.yaml` or `Justfile`) will trigger:
 
-1. Concourse detects the change via webhook
+1. Your CI/CD system (e.g. Concourse, GitHub Actions) detects the change via webhook
 2. Your repo is cloned
 3. `just docs-check` runs (strict validation)
 4. `just docs-build` runs (generates HTML)
 5. Output is copied to `{domain}/{service}/` in the aggregated S3 bucket
 6. CloudFront cache is invalidated
 7. Search index is regenerated to include your updated content
-8. Slack notification: ✅ build succeeded or ❌ build failed
+8. Team notification: ✅ build succeeded or ❌ build failed
 
 **You don't need to do anything.** Edit your docs, push, and they're live.
 
@@ -227,7 +227,7 @@ Yes — `just docs-serve` runs MkDocs locally at `http://localhost:8000` with li
 
 ### What if my build fails?
 
-You'll see a Slack notification in `#platform-engineering` with the error. Common causes:
+Your platform team's notification channel will show the error. Common causes:
 
 | Error | Fix |
 |-------|-----|
@@ -254,7 +254,7 @@ We use Pagefind, a static search library that indexes all HTML content at deploy
 
 ### Is the site public or internal-only?
 
-This depends on your organization's configuration. Check with the PE team. The site can be restricted to VPN/internal network via CloudFront IP restrictions, or made publicly accessible.
+This depends on your organization's configuration. Check with your platform team. The site can be restricted to VPN/internal network via CloudFront IP restrictions, or made publicly accessible.
 
 ---
 
@@ -322,6 +322,6 @@ This gives you a minimal MkDocs Material site with a Diataxis-inspired structure
 
 ## Need Help?
 
-- **Slack:** `#platform-engineering`
+- **Contact:** Your platform team's communication channel
 - **Pipeline repo:** `github.com/{org}/docs-pipeline`
-- **SST reference guide:** Ask PE team for the SST Reference Guide if you want to understand the infrastructure
+- **SST reference guide:** [SST for Static Hosting](/reference/sst-hosting/) — infrastructure reference for S3 + CloudFront
