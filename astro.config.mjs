@@ -23,8 +23,14 @@ export default defineConfig({
           label: 'Reference',
           items: [
             { label: 'Manifest Schema', slug: 'reference/manifest-schema' },
-            { label: 'Implementation', slug: 'reference/implementation' },
-            { label: 'SST for Static Hosting', slug: 'reference/sst-hosting' },
+          ],
+        },
+        {
+          label: 'Deployment Guides',
+          items: [
+            { label: 'GitHub Actions + GitHub Pages', slug: 'deployment/github-pages' },
+            { label: 'GitHub Actions + AWS (SST)', slug: 'reference/sst-hosting' },
+            { label: 'Concourse + AWS', slug: 'reference/implementation' },
           ],
         },
         {

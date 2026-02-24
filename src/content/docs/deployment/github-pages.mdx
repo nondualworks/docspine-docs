@@ -1,0 +1,192 @@
+---
+title: GitHub Actions + GitHub Pages
+description: Deploy a Docspine aggregation pipeline using GitHub Actions and GitHub Pages — no cloud account required.
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+The lowest-friction way to run Docspine. Anyone with a GitHub account can fork the demo repo and have a live aggregated docs site in under 5 minutes — no AWS account, no Concourse, no infrastructure setup.
+
+**Live demo:** [nondualworks.github.io/docspine-demo](https://nondualworks.github.io/docspine-demo)
+**Demo repo:** [github.com/nondualworks/docspine-demo](https://github.com/nondualworks/docspine-demo)
+
+---
+
+## How it works
+
+```
+docs-registry.yaml          ← list of team repos to aggregate
+       ↓
+GitHub Actions workflow     ← triggers on push + daily schedule
+       ↓
+scripts/aggregate.py        ← clones each repo, runs just docs-build
+scripts/generate-landing-page.py
+scripts/generate-llms-txt.py
+       ↓
+npx pagefind --site dist    ← builds unified search index
+       ↓
+GitHub Pages                ← serves the aggregated site
+```
+
+Each team repo needs two files: a `docspine.yaml` manifest and a `Justfile` with standard build targets. The pipeline reads the registry, clones each repo, runs `just docs-build`, copies the HTML output, and deploys the whole thing as a single static site.
+
+---
+
+## Quick start: fork the demo
+
+**1. Fork [nondualworks/docspine-demo](https://github.com/nondualworks/docspine-demo)**
+
+**2. Enable GitHub Pages**
+Settings → Pages → Source: **GitHub Actions**
+
+**3. Edit `docs-registry.yaml`** to point at your team repos:
+
+```yaml
+routing:
+  group_by: domain
+
+repos:
+  - url: https://github.com/your-org/your-repo.git
+    team: payments
+    domain: checkout
+    service: checkout-api
+    nav_title: Checkout API
+    branch: main
+    docs_path: .
+```
+
+Each repo must contain a `docspine.yaml` and a `Justfile`. See [Register a Docs Microsite](/how-to/register-microsite/) for how to add those.
+
+**4. Push** — the workflow triggers, builds, and deploys automatically.
+
+---
+
+## Setting up from scratch
+
+If you'd rather build the pipeline repo yourself instead of forking:
+
+### Repository structure
+
+```
+your-docs-pipeline/
+├── .github/
+│   └── workflows/
+│       └── deploy.yml
+├── docs-registry.yaml
+├── scripts/
+│   ├── aggregate.py
+│   ├── generate-landing-page.py
+│   └── generate-llms-txt.py
+└── README.md
+```
+
+### GitHub Actions workflow
+
+```yaml
+name: Aggregate and Deploy Docs
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * *'   # Daily — picks up upstream doc changes
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: extractions/setup-just@v2
+      - name: Install dependencies
+        run: pip install pyyaml mkdocs mkdocs-material
+      - name: Aggregate docs
+        run: python scripts/aggregate.py
+      - name: Generate landing page
+        run: python scripts/generate-landing-page.py
+      - name: Generate llms.txt
+        run: python scripts/generate-llms-txt.py
+      - name: Index with Pagefind
+        run: npx pagefind --site dist
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
+```
+
+### Registry format
+
+```yaml
+# docs-registry.yaml
+routing:
+  group_by: domain   # "domain", "team", or "flat"
+
+repos:
+  - url: https://github.com/{org}/{repo}.git
+    team: payments
+    domain: checkout
+    service: checkout-api
+    nav_title: Checkout API
+    branch: main
+    docs_path: .        # path within the repo where docspine.yaml lives
+```
+
+Adding a team = one PR to this file.
+
+---
+
+## What the pipeline builds
+
+Given the registry above, the deployed site looks like:
+
+```
+docs.{your-org}.github.io/{pipeline-repo}/
+├── index.html                    ← landing page + unified search
+├── llms.txt                      ← AI discovery file
+├── _pagefind/                    ← search index (auto-generated)
+└── checkout/
+    └── checkout-api/
+        └── index.html            ← your team's built docs
+```
+
+The `domain/service/` path structure follows the Diataxis-friendly convention described in the [Capability Overview](/explanation/capability-overview/).
+
+---
+
+## Extending the pipeline
+
+<CardGrid>
+  <Card title="Add more frameworks" icon="puzzle">
+    MkDocs is the default. For Astro or Docusaurus teams, install their build tools in the workflow's dependencies step. The `just docs-build` target in each team's Justfile handles the rest.
+  </Card>
+  <Card title="Add more services" icon="add-document">
+    Open a PR to `docs-registry.yaml` with a new entry. The pipeline picks it up on next run.
+  </Card>
+  <Card title="Private repos" icon="setting">
+    Add a `GH_TOKEN` secret and pass it to the clone step: `git clone https://$GH_TOKEN@github.com/...`
+  </Card>
+  <Card title="Other CI systems" icon="rocket">
+    The `scripts/` are plain Python — they run anywhere. See [Concourse + AWS](/reference/implementation/) for a production setup.
+  </Card>
+</CardGrid>
