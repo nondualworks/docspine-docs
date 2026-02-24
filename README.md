@@ -92,7 +92,7 @@ Full documentation is available at **[nondualworks.github.io/docspine](https://n
 
 - **[Capability Overview](https://nondualworks.github.io/docspine/explanation/capability-overview/)** — What Docspine is and why it exists
 - **[Philosophy](https://nondualworks.github.io/docspine/explanation/philosophy/)** — Documentation-first development and the LLM multiplier
-- **[Implementation Reference](https://nondualworks.github.io/docspine/reference/implementation/)** — Pipeline, SST, Concourse, Docker, LocalStack
+- **[Implementation Reference](https://nondualworks.github.io/docspine/deployment/implementation/)** — Pipeline, SST, Concourse, Docker, LocalStack
 - **[Manifest Schema](https://nondualworks.github.io/docspine/reference/manifest-schema/)** — The `docspine.yaml` contract
 - **[Register a Microsite](https://nondualworks.github.io/docspine/how-to/register-microsite/)** — Step-by-step onboarding guide
 - **[Local Development](https://nondualworks.github.io/docspine/how-to/local-development/)** — LocalStack setup for testing

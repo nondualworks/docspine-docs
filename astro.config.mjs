@@ -29,8 +29,8 @@ export default defineConfig({
           label: 'Deployment Guides',
           items: [
             { label: 'GitHub Actions + GitHub Pages', slug: 'deployment/github-pages' },
-            { label: 'GitHub Actions + AWS (SST)', slug: 'reference/sst-hosting' },
-            { label: 'Concourse + AWS', slug: 'reference/implementation' },
+            { label: 'GitHub Actions + AWS (SST)', slug: 'deployment/sst-hosting' },
+            { label: 'Concourse + AWS', slug: 'deployment/implementation' },
           ],
         },
         {
