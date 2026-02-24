@@ -1,0 +1,171 @@
+---
+title: Manifest Schema
+description: The docspine.yaml contract — fields, types, and examples
+---
+
+## Overview
+
+Every repository that participates in a Docspine aggregation pipeline must include a `docspine.yaml` file at its root (or at the path specified in the registry). This file is the contract between the team's documentation and the aggregation pipeline.
+
+## Schema
+
+```yaml
+# docspine.yaml
+
+team: payments                      # Required. Team identifier.
+domain: checkout                    # Required. Business domain (DDD bounded context).
+service: checkout-api               # Required. Service identifier (URL path segment).
+nav_title: Checkout API             # Required. Display name on the landing page.
+
+framework: mkdocs                   # Required. One of: mkdocs, astro, docusaurus, hugo, sphinx, other.
+source_dir: docs/                   # Required. Where source files live (relative to repo root).
+output_dir: site/                   # Required. Where built HTML goes (relative to repo root).
+```
+
+## Field Reference
+
+### `team`
+
+**Type:** string · **Required**
+
+The team that owns this documentation. Used for notifications (build success/failure), attribution on the landing page directory, and ownership queries. Should match your organization's team naming convention.
+
+**Examples:** `payments`, `identity`, `platform-engineering`, `data-team`
+
+### `domain`
+
+**Type:** string · **Required**
+
+The business domain this service belongs to, following DDD bounded context naming. This field determines the top-level URL grouping: `docs.company.com/{domain}/{service}/`.
+
+Using business domains rather than team names ensures documentation is organized by *what it does*, not *who owns it*. Team names change with reorgs; business domains are more stable. Consumers think "I need checkout docs," not "I need the payments team's docs."
+
+**Examples:** `checkout`, `identity`, `platform`, `observability`, `data-pipeline`
+
+### `service`
+
+**Type:** string · **Required**
+
+The service identifier. Becomes the second-level URL path segment: `docs.company.com/{domain}/{service}/`. Should be the canonical service name used across your organization (matching what appears in your service catalog, CI/CD, monitoring, etc.).
+
+**Examples:** `checkout-api`, `auth-gateway`, `notification-worker`, `base-images`
+
+### `nav_title`
+
+**Type:** string · **Required**
+
+Human-readable display name shown on the docs landing page directory and in the search index. Can include spaces and mixed case.
+
+**Examples:** `Checkout API`, `Auth Gateway`, `Notification Worker`, `Base Images`
+
+### `framework`
+
+**Type:** enum · **Required**
+
+The documentation framework used to build this site. The pipeline uses this to select the correct builder image and understand expected behavior. Current supported values:
+
+| Value | Framework | Notes |
+|-------|-----------|-------|
+| `mkdocs` | MkDocs (with Material theme) | Default recommendation |
+| `astro` | Astro / Starlight | For richer documentation experiences |
+| `docusaurus` | Docusaurus | React-based documentation |
+| `hugo` | Hugo | Go-based static site generator |
+| `sphinx` | Sphinx | Python documentation standard |
+| `other` | Any other generator | Pipeline calls Justfile targets without assumptions |
+
+### `source_dir`
+
+**Type:** string (path) · **Required**
+
+Relative path from the repo root to the documentation source files. The pipeline uses this to detect changes (only trigger builds when files in this directory change).
+
+**Examples:** `docs/`, `.`, `documentation/`, `src/docs/`
+
+### `output_dir`
+
+**Type:** string (path) · **Required**
+
+Relative path from the repo root where the built HTML output is placed after running `just docs-build`. The pipeline copies this directory to the aggregated site.
+
+**Examples:** `site/`, `build/`, `dist/`, `docs/build/`
+
+---
+
+## Justfile Contract
+
+Alongside `docspine.yaml`, each repo must have a `Justfile` at the repo root (or at `source_dir` level) with three required targets:
+
+```just
+# Required: Build static HTML to output_dir
+docs-build:
+    cd docs && mkdocs build --site-dir ../site
+
+# Required: Serve locally for development
+docs-serve:
+    cd docs && mkdocs serve --dev-addr 0.0.0.0:8000
+
+# Required: Validate (strict mode — fail on warnings)
+docs-check:
+    cd docs && mkdocs build --strict --site-dir ../site
+```
+
+The implementation behind each target varies by framework. The target names are fixed — the pipeline always calls `just docs-build`, `just docs-serve`, and `just docs-check` regardless of the underlying tool.
+
+**Why Justfile?** It provides indirection between the pipeline and the build tool. If a team switches from MkDocs to Astro, they update their Justfile — the pipeline doesn't change. Engineers also get local/CI parity: the same `just docs-serve` that works on their laptop is what the pipeline runs.
+
+---
+
+## Registry Schema
+
+The registry lists which repos the pipeline should build. Maintained in the pipeline repository.
+
+```yaml
+# docs-registry.yaml
+
+routing:
+  group_by: domain          # "domain", "team", or "flat"
+
+repos:
+  - url: git@github.com:{org}/checkout-api.git
+    team: payments
+    domain: checkout
+    service: checkout-api
+    branch: main
+    docs_path: .              # Where docspine.yaml lives
+
+  - url: git@github.com:{org}/auth-gateway.git
+    team: identity
+    domain: identity
+    service: auth-gateway
+    branch: main
+    docs_path: docs/
+```
+
+The `routing.group_by` field controls URL structure:
+
+| Value | URL pattern | Example |
+|-------|-------------|---------|
+| `domain` | `/{domain}/{service}/` | `/checkout/checkout-api/` |
+| `team` | `/{team}/{service}/` | `/payments/checkout-api/` |
+| `flat` | `/{service}/` | `/checkout-api/` |
+
+Switching between grouping strategies requires changing this one field. Teams don't modify their manifests or Justfiles.
+
+---
+
+## Validation
+
+You can validate your manifest locally:
+
+```bash
+# Check that docspine.yaml exists and has required fields
+cat docspine.yaml
+
+# Check that Justfile has required targets
+just --list | grep -E "docs-build|docs-serve|docs-check"
+
+# Run the full validation
+just docs-check
+```
+
+The pipeline runs `just docs-check` before `just docs-build`. If strict validation fails, the build stops and the team is notified via Slack.

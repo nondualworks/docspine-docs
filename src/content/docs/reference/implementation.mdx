@@ -1,0 +1,640 @@
+---
+title: Implementation Reference
+description: Pipeline architecture, Concourse config, SST setup, Docker image, and operational runbook
+---
+
+
+---
+
+## Architecture
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│ Team A repo     │     │ Team B repo     │     │ Team C repo     │
+│ └── docs/       │     │ └── docs/       │     │ └── docs/       │
+│     mkdocs.yml  │     │     mkdocs.yml  │     │     mkdocs.yml  │
+│     Justfile    │     │     Justfile    │     │     Justfile    │
+└────────┬────────┘     └────────┬────────┘     └────────┬────────┘
+         │ webhook               │ webhook               │ webhook
+         └───────────────────────┼───────────────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │  Concourse Pipeline     │
+                    │                         │
+                    │  1. Clone repo          │
+                    │  2. just docs-build     │
+                    │  3. Copy output to      │
+                    │     aggregated tree     │
+                    │  4. Deploy via SST      │
+                    └────────────┬────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │  AWS (via SST)          │
+                    │                         │
+                    │  S3 bucket              │
+                    │  └── checkout/          │
+                    │      └── checkout-api/  │
+                    │  └── identity/          │
+                    │      └── auth-gateway/  │
+                    │                         │
+                    │  CloudFront CDN         │
+                    │  Route53 DNS            │
+                    │  docs.{company}.com     │
+                    └─────────────────────────┘
+```
+
+---
+
+## Registry Schema
+
+The registry lists which repos the pipeline should build. Maintained in the pipeline repo.
+
+```yaml
+# docs-registry.yaml
+
+# Routing configuration
+routing:
+  group_by: domain          # "domain", "team", or "flat"
+
+repos:
+  - url: git@github.com:{org}/checkout-api.git
+    team: payments
+    domain: checkout
+    service: checkout-api
+    branch: main
+    docs_path: .              # where docspine.yaml lives
+
+  - url: git@github.com:{org}/auth-gateway.git
+    team: identity
+    domain: identity
+    service: auth-gateway
+    branch: main
+    docs_path: docs/
+
+  - url: git@github.com:{org}/notification-worker.git
+    team: platform
+    domain: platform
+    service: notification-worker
+    branch: main
+    docs_path: .
+```
+
+The `routing.group_by` field controls URL structure:
+- `domain` → `/{domain}/{service}/` (recommended)
+- `team` → `/{team}/{service}/`
+- `flat` → `/{service}/`
+
+---
+
+## Manifest Schema
+
+Each registered repo must contain this file at the path specified by `docs_path` in the registry.
+
+```yaml
+# docspine.yaml
+
+team: payments                      # Team identifier (for ownership, notifications)
+domain: checkout                    # Business domain (for URL grouping)
+service: checkout-api               # Service identifier (URL path segment)
+nav_title: Checkout API             # Display name on landing page
+
+framework: mkdocs                   # mkdocs | astro | docusaurus (mkdocs only for now)
+source_dir: docs/                   # Where source files live (relative to repo root)
+output_dir: site/                   # Where built HTML goes (relative to repo root)
+```
+
+---
+
+## Justfile Standard Targets
+
+Each registered repo must have a Justfile at repo root with these targets:
+
+```just
+# Required: Build static HTML to output_dir
+docs-build:
+    cd docs && mkdocs build --site-dir ../site
+
+# Required: Serve locally for development
+docs-serve:
+    cd docs && mkdocs serve --dev-addr 0.0.0.0:8000
+
+# Required: Validate (strict mode — fail on warnings)
+docs-check:
+    cd docs && mkdocs build --strict --site-dir ../site
+```
+
+Implementation varies by framework. The target names are fixed.
+
+---
+
+## Builder Docker Image
+
+Shared build environment for all docs pipeline jobs.
+
+```dockerfile
+# docker/Dockerfile.builder
+FROM python:3.12-slim
+
+# MkDocs + Material theme + common plugins
+RUN pip install --no-cache-dir \
+    mkdocs==1.6.* \
+    mkdocs-material==9.* \
+    mkdocs-awesome-pages-plugin \
+    mkdocs-minify-plugin
+
+# Just (command runner)
+RUN curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+
+# Node.js (for teams with npm-based plugins or Pagefind)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pagefind (cross-service search indexer)
+RUN npm install -g pagefind
+
+WORKDIR /workspace
+```
+
+Build and push to ECR:
+
+```bash
+docker build -f docker/Dockerfile.builder -t docs-builder:latest .
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin {account}.dkr.ecr.us-east-1.amazonaws.com
+docker tag docs-builder:latest {account}.dkr.ecr.us-east-1.amazonaws.com/docs-builder:latest
+docker push {account}.dkr.ecr.us-east-1.amazonaws.com/docs-builder:latest
+```
+
+---
+
+## Concourse Pipeline
+
+### Pipeline Structure
+
+Two job types: one build job per registered repo, and one deploy job triggered by any successful build.
+
+### Pipeline YAML
+
+```yaml
+# ci/pipeline.yml
+
+resources:
+  - name: checkout-api-docs
+    type: git
+    source:
+      uri: git@github.com:{org}/checkout-api.git
+      branch: main
+      private_key: ((github-private-key))
+      paths:
+        - docs/**
+        - docspine.yaml
+        - Justfile
+
+  - name: auth-gateway-docs
+    type: git
+    source:
+      uri: git@github.com:{org}/auth-gateway.git
+      branch: main
+      private_key: ((github-private-key))
+      paths:
+        - docs/**
+        - docspine.yaml
+        - Justfile
+
+  - name: docs-pipeline-repo
+    type: git
+    source:
+      uri: git@github.com:{org}/docs-pipeline.git
+      branch: main
+      private_key: ((github-private-key))
+
+jobs:
+  - name: build-checkout-api
+    plan:
+      - get: checkout-api-docs
+        trigger: true
+      - get: docs-pipeline-repo
+      - task: build-docs
+        config:
+          platform: linux
+          image_resource:
+            type: registry-image
+            source:
+              repository: {account}.dkr.ecr.us-east-1.amazonaws.com/docs-builder
+              aws_access_key_id: ((aws-access-key))
+              aws_secret_access_key: ((aws-secret-key))
+          inputs:
+            - name: checkout-api-docs
+            - name: docs-pipeline-repo
+          outputs:
+            - name: built-site
+          run:
+            path: sh
+            args:
+              - -c
+              - |
+                cd checkout-api-docs
+                just docs-check
+                just docs-build
+                # Route to domain-based path
+                mkdir -p ../built-site/checkout/checkout-api
+                cp -r site/* ../built-site/checkout/checkout-api/
+      - task: deploy
+        config:
+          platform: linux
+          image_resource:
+            type: registry-image
+            source:
+              repository: amazon/aws-cli
+          inputs:
+            - name: built-site
+          params:
+            AWS_ACCESS_KEY_ID: ((aws-access-key))
+            AWS_SECRET_ACCESS_KEY: ((aws-secret-key))
+            AWS_DEFAULT_REGION: us-east-1
+            BUCKET_NAME: ((docs-bucket-name))
+            DISTRIBUTION_ID: ((cloudfront-distribution-id))
+          run:
+            path: sh
+            args:
+              - -c
+              - |
+                # Sync only this service's path
+                aws s3 sync built-site/ s3://$BUCKET_NAME/ --delete \
+                  --exclude "*" --include "checkout/checkout-api/*"
+                # Invalidate CloudFront cache for this path
+                aws cloudfront create-invalidation \
+                  --distribution-id $DISTRIBUTION_ID \
+                  --paths "/checkout/checkout-api/*"
+
+  - name: build-auth-gateway
+    plan:
+      # Same pattern as above with identity/auth-gateway path
+      - get: auth-gateway-docs
+        trigger: true
+      - get: docs-pipeline-repo
+      - task: build-docs
+        config:
+          platform: linux
+          image_resource:
+            type: registry-image
+            source:
+              repository: {account}.dkr.ecr.us-east-1.amazonaws.com/docs-builder
+              aws_access_key_id: ((aws-access-key))
+              aws_secret_access_key: ((aws-secret-key))
+          inputs:
+            - name: auth-gateway-docs
+            - name: docs-pipeline-repo
+          outputs:
+            - name: built-site
+          run:
+            path: sh
+            args:
+              - -c
+              - |
+                cd auth-gateway-docs
+                just docs-check
+                just docs-build
+                mkdir -p ../built-site/identity/auth-gateway
+                cp -r site/* ../built-site/identity/auth-gateway/
+
+  - name: rebuild-search-index
+    plan:
+      - get: docs-pipeline-repo
+        trigger: false
+      - task: regenerate-index
+        config:
+          platform: linux
+          image_resource:
+            type: registry-image
+            source:
+              repository: {account}.dkr.ecr.us-east-1.amazonaws.com/docs-builder
+          params:
+            AWS_ACCESS_KEY_ID: ((aws-access-key))
+            AWS_SECRET_ACCESS_KEY: ((aws-secret-key))
+            BUCKET_NAME: ((docs-bucket-name))
+            DISTRIBUTION_ID: ((cloudfront-distribution-id))
+          run:
+            path: sh
+            args:
+              - -c
+              - |
+                # Download full site from S3
+                aws s3 sync s3://$BUCKET_NAME/ ./full-site/
+                # Rebuild Pagefind index across all services
+                pagefind --site ./full-site
+                # Upload search index
+                aws s3 sync ./full-site/_pagefind/ s3://$BUCKET_NAME/_pagefind/
+                # Invalidate search index cache
+                aws cloudfront create-invalidation \
+                  --distribution-id $DISTRIBUTION_ID \
+                  --paths "/_pagefind/*"
+```
+
+**Note on parameterization:** The above duplicates job definitions per repo. For 3-4 repos this is manageable. At 10+ repos, generate the pipeline YAML from `docs-registry.yaml` using a script. Concourse's `across` step can also reduce duplication.
+
+---
+
+## SST Configuration
+
+See the separate **SST Reference Guide** for full details. Summary of what's needed:
+
+### sst.config.ts
+
+```typescript
+/// <reference path="./.sst/platform/config.d.ts" />
+
+export default $config({
+  app(input) {
+    return {
+      name: "docs-aggregation",
+      removal: input?.stage === "production" ? "retain" : "remove",
+      home: "aws",
+      providers: {
+        aws: { region: "us-east-1" },
+      },
+    };
+  },
+  async run() {
+    const site = new sst.aws.StaticSite("DocsSite", {
+      path: "./aggregated-site",
+      domain: "docs.{company}.com",
+    });
+    return { url: site.url };
+  },
+});
+```
+
+### AWS Resources Created
+
+| Resource | Purpose | Cost/month |
+|----------|---------|-----------|
+| S3 bucket | Stores HTML files | $0.02 |
+| CloudFront distribution | CDN + HTTPS | $0.85 |
+| ACM certificate (us-east-1) | TLS | Free |
+| Route53 A-record alias | DNS | $0.50 |
+| CloudFront Function | URL rewriting | Negligible |
+| IAM role | CloudFront → S3 access | Free |
+
+### IAM Policy
+
+The full IAM policy for the `docs-pipeline-deployer` role is available as `sst-docs-deployer-iam-policy.json`. Replace `REPLACE_ACCOUNT_ID` and `REPLACE_HOSTED_ZONE_ID` before applying.
+
+---
+
+## LocalStack Local Development
+
+### Docker Compose
+
+```yaml
+# docker-compose.localstack.yml
+services:
+  localstack:
+    image: localstack/localstack:latest
+    ports:
+      - "4566:4566"
+      - "4510-4559:4510-4559"
+    environment:
+      - SERVICES=s3,cloudfront,route53,acm,ssm,iam,lambda,sts
+      - DEBUG=0
+      - PERSISTENCE=1
+    volumes:
+      - localstack-data:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  localstack-data:
+```
+
+### Exercise Script
+
+Creates every AWS resource the pipeline would create, without SST:
+
+```bash
+#!/bin/bash
+# scripts/exercise-local.sh
+set -e
+
+BUCKET_NAME="docs-aggregation-local"
+DOMAIN="docs.company.local"
+
+echo "=== Creating S3 bucket ==="
+awslocal s3 mb s3://$BUCKET_NAME
+
+echo "=== Uploading test content ==="
+awslocal s3 sync ./aggregated-site/ s3://$BUCKET_NAME/
+
+echo "=== Configuring static website hosting ==="
+awslocal s3 website s3://$BUCKET_NAME/ \
+  --index-document index.html \
+  --error-document error.html
+
+echo "=== Setting bucket policy ==="
+awslocal s3api put-bucket-policy --bucket $BUCKET_NAME --policy '{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "PublicReadGetObject",
+    "Effect": "Allow",
+    "Principal": "*",
+    "Action": "s3:GetObject",
+    "Resource": "arn:aws:s3:::'$BUCKET_NAME'/*"
+  }]
+}'
+
+echo "=== Creating CloudFront distribution ==="
+DIST_ID=$(awslocal cloudfront create-distribution \
+  --distribution-config '{
+    "CallerReference": "docs-local-'$(date +%s)'",
+    "Origins": {
+      "Quantity": 1,
+      "Items": [{
+        "Id": "S3-'$BUCKET_NAME'",
+        "DomainName": "'$BUCKET_NAME'.s3.localhost.localstack.cloud:4566",
+        "S3OriginConfig": { "OriginAccessIdentity": "" }
+      }]
+    },
+    "DefaultCacheBehavior": {
+      "TargetOriginId": "S3-'$BUCKET_NAME'",
+      "ViewerProtocolPolicy": "allow-all",
+      "ForwardedValues": { "QueryString": false, "Cookies": { "Forward": "none" } },
+      "MinTTL": 0
+    },
+    "Enabled": true,
+    "DefaultRootObject": "index.html",
+    "Comment": "Docs aggregation - local test"
+  }' --query 'Distribution.Id' --output text)
+echo "Distribution created: $DIST_ID"
+
+echo "=== Creating Route53 hosted zone ==="
+awslocal route53 create-hosted-zone \
+  --name $DOMAIN \
+  --caller-reference "docs-local-$(date +%s)"
+
+echo "=== Creating ACM certificate ==="
+awslocal acm request-certificate \
+  --domain-name $DOMAIN \
+  --region us-east-1
+
+echo ""
+echo "=== Verification ==="
+awslocal s3 ls s3://$BUCKET_NAME/ --recursive
+awslocal cloudfront list-distributions \
+  --query 'DistributionList.Items[*].[Id,DomainName,Status]' --output table
+awslocal route53 list-hosted-zones \
+  --query 'HostedZones[*].[Name,Id]' --output table
+awslocal acm list-certificates --region us-east-1 --output table
+echo ""
+echo "=== Content access ==="
+echo "curl http://$BUCKET_NAME.s3-website.localhost.localstack.cloud:4566/"
+```
+
+### Justfile Targets
+
+```just
+# Start LocalStack
+local-up:
+    docker compose -f docker-compose.localstack.yml up -d
+
+# Stop LocalStack
+local-down:
+    docker compose -f docker-compose.localstack.yml down
+
+# Exercise all AWS resources locally
+local-exercise:
+    ./scripts/exercise-local.sh
+
+# Build docs and deploy to LocalStack S3
+local-deploy:
+    just docs-build-all
+    awslocal s3 sync ./aggregated-site/ s3://docs-aggregation-local/
+
+# Verify local resources
+local-verify:
+    awslocal s3 ls s3://docs-aggregation-local/ --recursive
+    awslocal cloudfront list-distributions --output table
+```
+
+### Recommended Workflow
+
+```
+Local (LocalStack)                      Real AWS
+──────────────────                      ────────
+1. just local-up                        
+2. just local-exercise                  
+3. Verify via awslocal                  
+4. Test Concourse tasks locally         
+5. ✅ Everything works                → 6. sst deploy --stage production
+                                      → 7. Concourse handles future deploys
+```
+
+---
+
+## Landing Page Generator
+
+Generate `index.html` from the registry:
+
+```bash
+#!/bin/bash
+# scripts/generate-landing-page.sh
+# Reads docs-registry.yaml and generates the landing page with Pagefind search
+
+cat > aggregated-site/index.html << 'HEADER'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Documentation Hub</title>
+  <link href="/_pagefind/pagefind-ui.css" rel="stylesheet">
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { margin-bottom: 0.5rem; }
+    .subtitle { color: #666; margin-bottom: 2rem; }
+    .domain-group { margin-bottom: 1.5rem; }
+    .domain-name { font-size: 1.1rem; font-weight: 600; color: #333; margin-bottom: 0.5rem; }
+    .service-list { list-style: none; padding: 0; }
+    .service-list li { padding: 0.4rem 0; }
+    .service-list a { color: #2563eb; text-decoration: none; }
+    .service-list a:hover { text-decoration: underline; }
+    .team-badge { font-size: 0.75rem; color: #888; margin-left: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Documentation Hub</h1>
+  <p class="subtitle">Search across all services or browse by domain.</p>
+  <div id="search"></div>
+  <script src="/_pagefind/pagefind-ui.js"></script>
+  <script>
+    new PagefindUI({ element: "#search", showSubResults: true });
+  </script>
+  <hr>
+HEADER
+
+# Parse registry and generate directory (requires yq)
+# This is a simplified version — production would use a proper template
+echo "  <h2>Services</h2>" >> aggregated-site/index.html
+
+yq -r '.repos[] | "  <div class=\"domain-group\"><div class=\"domain-name\">" + .domain + "</div><ul class=\"service-list\"><li><a href=\"/" + .domain + "/" + .service + "/\">" + .service + "</a><span class=\"team-badge\">" + .team + "</span></li></ul></div>"' docs-registry.yaml >> aggregated-site/index.html
+
+echo "</body></html>" >> aggregated-site/index.html
+```
+
+---
+
+## Decisions Log
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Static hosting provider | SST → S3 + CloudFront | 5 lines of config, $1.50/month, CDN included |
+| CI/CD | Concourse | Dog-fooding PE infrastructure, team expertise |
+| Search | Pagefind | Static, MIT licensed, free, framework-agnostic, zero infra |
+| URL grouping | Business domain (DDD) | More stable than team names, consumer-oriented |
+| Registry | Manual YAML file | Explicit opt-in, reviewable, debuggable |
+| Build contract | Justfile with 3 targets | Framework-agnostic, local/CI parity |
+| Default framework | MkDocs Material | Widely used, good defaults, clean HTML output |
+| Local dev | LocalStack (Community edition) | Free, S3+CloudFront+Route53 supported |
+| IAM | Scoped policy per service | No AdministratorAccess, least-privilege |
+
+---
+
+## Operational Runbook
+
+### Pipeline Fails on a Repo
+
+1. Check Slack notification for error details
+2. Common causes: broken links (`docs-check` strict mode), missing Justfile, malformed manifest
+3. Fix is in the team's repo, not the pipeline
+
+### Adding a New Repo
+
+1. Team adds `docspine.yaml` + `Justfile` to their repo
+2. PR to `docs-registry.yaml` in `docs-pipeline` repo
+3. Add corresponding Concourse resource + job to `ci/pipeline.yml`
+4. `fly set-pipeline` to update Concourse
+5. Trigger initial build manually or wait for first push
+
+### Removing a Repo
+
+1. Remove entry from `docs-registry.yaml`
+2. Remove Concourse resource + job from `ci/pipeline.yml`
+3. `fly set-pipeline` to update Concourse
+4. Delete the service's path from S3: `aws s3 rm s3://{bucket}/{domain}/{service}/ --recursive`
+5. Invalidate CloudFront cache for that path
+
+### Changing URL Grouping
+
+1. Update `routing.group_by` in `docs-registry.yaml`
+2. Update Concourse job output paths to match new structure
+3. Full rebuild: trigger all build jobs to repopulate S3 with new paths
+4. Invalidate entire CloudFront cache: `--paths "/*"`
+
+### Rebuilding the Search Index
+
+The search index is per-service (each deploy updates that service's pages). To rebuild the full cross-service index:
+
+```bash
+fly trigger-job -j docs-pipeline/rebuild-search-index
+```
+
+### SSL Certificate Renewal
+
+ACM certificates auto-renew. No action needed. If renewal fails (DNS validation issue), check Route53 records.

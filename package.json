@@ -1,0 +1,18 @@
+{
+  "name": "docspine",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "An open standard for federated documentation — by humans, for humans and machines.",
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.37.6",
+    "astro": "^5.0.0",
+    "sharp": "^0.33.0"
+  }
+}

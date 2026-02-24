@@ -1,0 +1,59 @@
+---
+title: Docspine
+description: A specification for federated documentation — by humans, for humans and machines.
+template: splash
+hero:
+  tagline: Teams author docs independently. A pipeline aggregates them under one searchable domain.
+  actions:
+    - text: Get Started
+      link: /docspine/how-to/register-microsite/
+      icon: right-arrow
+      variant: primary
+    - text: Read the Philosophy
+      link: /docspine/explanation/philosophy/
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## Core Principles
+
+<CardGrid>
+  <Card title="Contract-Based" icon="document">
+    Two files (`docspine.yaml` + `Justfile`) define the interface between any team's docs and the aggregation pipeline. No lock-in to specific tools.
+  </Card>
+  <Card title="Framework-Agnostic" icon="puzzle">
+    MkDocs, Astro Starlight, Docusaurus, Hugo — anything that produces HTML. The pipeline doesn't care what generates your docs.
+  </Card>
+  <Card title="Human + Machine Readable" icon="magnifier">
+    Diataxis structure and a single searchable domain serve both human engineers and AI agents. Documentation becomes organizational memory.
+  </Card>
+  <Card title="Zero Infrastructure" icon="rocket">
+    Static hosting on S3 + CDN. No servers to manage, no processes to crash. ~$1.50/month.
+  </Card>
+</CardGrid>
+
+## How It Works
+
+```
+Team repos (author independently)  →  Aggregation pipeline  →  docs.company.com
+```
+
+Each team adds a `docspine.yaml` manifest and a `Justfile` with three standard targets. The pipeline watches registered repos, builds on push, and deploys to a shared domain with unified cross-service search.
+
+**Result:** `docs.company.com/{domain}/{service}/` — every service's documentation, searchable from one place.
+
+## Quick Links
+
+<CardGrid>
+  <Card title="Capability Overview" icon="open-book">
+    [What Docspine is and why it exists](/docspine/explanation/capability-overview/) — the pattern, design decisions, and organizational flexibility.
+  </Card>
+  <Card title="Register a Microsite" icon="add-document">
+    [Step-by-step guide](/docspine/how-to/register-microsite/) to add your team's docs in 5 minutes.
+  </Card>
+</CardGrid>
+
+## Origin
+
+Docspine was created by the platform engineering team at [Nondual Works](https://github.com/nondualworks) as the documentation specification for Spine, an Internal Developer Platform. We open-sourced it because the pattern is useful independent of any IDP.

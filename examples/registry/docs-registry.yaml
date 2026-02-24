@@ -1,0 +1,28 @@
+# docs-registry.yaml
+# Registry of repos whose documentation is aggregated by the Docspine pipeline.
+# Adding a team = one PR to this file.
+
+routing:
+  group_by: domain          # "domain", "team", or "flat"
+
+repos:
+  - url: git@github.com:acme-corp/checkout-api.git
+    team: payments
+    domain: checkout
+    service: checkout-api
+    branch: main
+    docs_path: .
+
+  - url: git@github.com:acme-corp/auth-gateway.git
+    team: identity
+    domain: identity
+    service: auth-gateway
+    branch: main
+    docs_path: docs/
+
+  - url: git@github.com:acme-corp/notification-worker.git
+    team: platform
+    domain: platform
+    service: notification-worker
+    branch: main
+    docs_path: .

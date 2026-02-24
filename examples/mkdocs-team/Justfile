@@ -1,0 +1,14 @@
+# Docspine standard targets
+# See: https://nondualworks.github.io/docspine/reference/manifest-schema/
+
+# Build static HTML to output_dir
+docs-build:
+    cd docs && mkdocs build --site-dir ../site
+
+# Serve locally for development
+docs-serve:
+    cd docs && mkdocs serve --dev-addr 0.0.0.0:8000
+
+# Validate (strict mode — fail on warnings)
+docs-check:
+    cd docs && mkdocs build --strict --site-dir ../site

@@ -1,0 +1,93 @@
+---
+title: Philosophy
+description: Documentation-first development, nondual thinking, and why structure serves both humans and machines
+---
+
+## Documentation-First Development
+
+V0 documentation exists before V1 code. This isn't a process rule — it's a recognition that documentation and code were never separate to begin with.
+
+When you write a MANIFEST.md before writing your first line of implementation, you're not "doing documentation." You're defining intent. The architecture, the boundaries, the contracts — they exist in the documentation first, and the code is their expression. The maker and the made are one.
+
+This is what we call **nondual thinking** in software: the apparent duality between "writing docs" and "writing code" dissolves when both are treated as expressions of the same intent. You don't document code. You express intent, and code is one of its forms.
+
+Docspine is built on this principle. The `docspine.yaml` manifest isn't metadata *about* documentation — it's the documentation's first expression of itself. The Justfile targets aren't build scripts *for* the docs — they're the contract through which docs participate in the larger system.
+
+---
+
+## Not Two: The Dualities Docspine Dissolves
+
+### Docs and Code — Not Two
+
+Documentation lives in the repository, versioned alongside the code it describes. When a developer changes an API, the docs are right there. When a reviewer reads a PR, the docs changes are visible. There is no separate "docs system" to update — the repo is the system.
+
+### Human Readers and AI Consumers — Not Two
+
+The same documentation that helps a new engineer understand the checkout service also helps an AI assistant answer questions about it. This isn't a coincidence — it's a structural property of well-organized content.
+
+Diataxis categories (tutorial, how-to, reference, explanation) aren't just a human navigation convention. They're machine-parseable semantics. An LLM asked "how do I deploy checkout-api?" knows to look in `how-to/`, not `reference/`. The directory structure *is* metadata. No tagging system needed.
+
+### Authoring and Publishing — Not Two
+
+Push to main. Docs are live. There is no separate publishing step, no manual deployment, no "remember to update the wiki." The CI/CD pipeline that builds your code also builds your docs. One workflow, one trigger, one outcome.
+
+### Team Docs and Org Docs — Not Two
+
+Teams author independently in their own repos with their own tools. The aggregation pipeline unifies everything under one domain. From the author's perspective, they own their docs. From the reader's perspective, there's one place to find everything. Federated authoring, unified discovery.
+
+---
+
+## Why Structure Matters for AI
+
+A unified documentation domain is the structural precondition for AI integration at any level. When all service documentation lives under one searchable domain with consistent URL conventions, several properties emerge naturally — not as bolt-on features, but as consequences of getting the structure right.
+
+### Diataxis URLs as Machine Semantics
+
+The four Diataxis categories create a lightweight type system encoded directly in the URL path:
+
+| URL path | What an AI infers | Use case |
+|----------|-------------------|----------|
+| `/{service}/tutorial/` | Step-by-step learning path | "Walk me through setting this up" |
+| `/{service}/how-to/` | Task-oriented procedure | "How do I deploy this?" |
+| `/{service}/reference/` | Factual, lookup-oriented | "What are the API parameters?" |
+| `/{service}/explanation/` | Conceptual, understanding-oriented | "Why was this designed this way?" |
+
+An AI assistant doesn't need custom metadata, tags, or a separate manifest file to navigate this. The directory convention *is* the metadata. No tagging system needed.
+
+### One Domain, One Discovery Point
+
+Thirty services scattered across thirty GitHub Pages sites means thirty places an AI tool might need to look — or more likely, zero places it actually finds. A single aggregated domain creates one URL for any AI system to discover: `docs.company.com`.
+
+The aggregation pipeline generates an [`llms.txt`](https://llmstxt.org/) file alongside the landing page, following the emerging convention for AI-readable content discovery. This makes the entire documentation corpus discoverable by developer tools like Cursor, Windsurf, and Claude Code, as well as internal RAG pipelines and AI assistants — whether the docs are public or behind a VPN.
+
+### Freshness by Construction
+
+Docs built from source on every push are current by definition. An AI consuming these docs gets today's truth, not a 2-year-old Confluence page that may or may not reflect reality. The aggregation pipeline guarantees that what's published matches what's in the repository.
+
+### What Docspine Doesn't Claim
+
+Docspine is not an AI tool. It doesn't implement RAG, vector search, or an MCP server. It creates the structural foundation that makes all of those things possible: one domain, consistent structure, machine-parseable organization, and a standard discovery file. The AI integration layer is downstream — and it's a layer you can build with whatever tools fit your stack.
+
+---
+
+## What This Is Not
+
+Docspine is **infrastructure, not culture**. It solves the "where do docs live and how do people find them" problem. It does not solve the "teams don't write docs" problem.
+
+However, reducing the friction between writing and publishing — from "set up GitHub Pages, configure DNS, manage deploys" to "add two files, open a PR" — removes a genuine barrier. When publishing is trivial, more teams publish.
+
+The `docs-check` strict validation also nudges quality upward. Broken links, missing pages, and build warnings are caught in CI rather than silently deployed. This is a gentle quality gate, not a compliance hammer.
+
+---
+
+## Influences
+
+Docspine draws on several established ideas:
+
+- **Diataxis** (Daniele Procida) — The four-category documentation framework that organizes content by user need
+- **Docs-as-code** — The practice of treating documentation with the same rigor as source code
+- **Domain-Driven Design** (Eric Evans) — The use of bounded contexts for URL organization rather than team names
+- **Shape Up** (Basecamp/37signals) — The development methodology used to scope and deliver Docspine itself
+- **Nondual philosophy** (Adi Shankaracharya) — The recognition that apparent dualities are expressions of one reality
+
+The synthesis is Docspine's own: a contract-based, framework-agnostic specification for federated documentation that treats human and machine consumption as a single concern.

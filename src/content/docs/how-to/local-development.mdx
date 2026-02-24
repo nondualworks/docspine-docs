@@ -1,0 +1,214 @@
+---
+title: Local Development
+description: Set up a local development environment with LocalStack to test the full deploy flow
+---
+
+## Overview
+
+LocalStack (Community Edition, free) emulates S3, CloudFront, Route53, ACM, and other AWS services locally. This lets you validate the entire Docspine infrastructure without touching real AWS.
+
+## Prerequisites
+
+- Docker installed and running
+- `awscli-local` installed: `pip install awscli-local`
+- `just` installed: `curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin`
+
+## Docker Compose
+
+Create `docker-compose.localstack.yml`:
+
+```yaml
+services:
+  localstack:
+    image: localstack/localstack:latest
+    ports:
+      - "4566:4566"
+      - "4510-4559:4510-4559"
+    environment:
+      - SERVICES=s3,cloudfront,route53,acm,ssm,iam,lambda,sts
+      - DEBUG=0
+      - PERSISTENCE=1
+    volumes:
+      - localstack-data:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  localstack-data:
+```
+
+## Start LocalStack
+
+```bash
+just local-up
+# or directly:
+docker compose -f docker-compose.localstack.yml up -d
+```
+
+Verify it's running:
+
+```bash
+curl http://localhost:4566/_localstack/health
+```
+
+## Exercise All AWS Resources
+
+The exercise script creates every AWS resource the Docspine pipeline would create, without SST:
+
+```bash
+#!/bin/bash
+# scripts/exercise-local.sh
+set -e
+
+BUCKET_NAME="docspine-local"
+DOMAIN="docs.company.local"
+
+echo "=== Creating S3 bucket ==="
+awslocal s3 mb s3://$BUCKET_NAME
+
+echo "=== Uploading test content ==="
+mkdir -p ./test-site
+echo "<h1>Docspine Local Test</h1>" > ./test-site/index.html
+awslocal s3 sync ./test-site/ s3://$BUCKET_NAME/
+
+echo "=== Configuring static website hosting ==="
+awslocal s3 website s3://$BUCKET_NAME/ \
+  --index-document index.html \
+  --error-document error.html
+
+echo "=== Setting bucket policy ==="
+awslocal s3api put-bucket-policy --bucket $BUCKET_NAME --policy '{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "PublicReadGetObject",
+    "Effect": "Allow",
+    "Principal": "*",
+    "Action": "s3:GetObject",
+    "Resource": "arn:aws:s3:::'$BUCKET_NAME'/*"
+  }]
+}'
+
+echo "=== Creating CloudFront distribution ==="
+DIST_ID=$(awslocal cloudfront create-distribution \
+  --distribution-config '{
+    "CallerReference": "docspine-local-'$(date +%s)'",
+    "Origins": {
+      "Quantity": 1,
+      "Items": [{
+        "Id": "S3-'$BUCKET_NAME'",
+        "DomainName": "'$BUCKET_NAME'.s3.localhost.localstack.cloud:4566",
+        "S3OriginConfig": { "OriginAccessIdentity": "" }
+      }]
+    },
+    "DefaultCacheBehavior": {
+      "TargetOriginId": "S3-'$BUCKET_NAME'",
+      "ViewerProtocolPolicy": "allow-all",
+      "ForwardedValues": { "QueryString": false, "Cookies": { "Forward": "none" } },
+      "MinTTL": 0
+    },
+    "Enabled": true,
+    "DefaultRootObject": "index.html",
+    "Comment": "Docspine - local test"
+  }' --query 'Distribution.Id' --output text)
+echo "Distribution created: $DIST_ID"
+
+echo "=== Creating Route53 hosted zone ==="
+awslocal route53 create-hosted-zone \
+  --name $DOMAIN \
+  --caller-reference "docspine-local-$(date +%s)"
+
+echo "=== Creating ACM certificate ==="
+awslocal acm request-certificate \
+  --domain-name $DOMAIN \
+  --region us-east-1
+
+echo ""
+echo "=== Verification ==="
+awslocal s3 ls s3://$BUCKET_NAME/ --recursive
+awslocal cloudfront list-distributions \
+  --query 'DistributionList.Items[*].[Id,DomainName,Status]' --output table
+awslocal route53 list-hosted-zones \
+  --query 'HostedZones[*].[Name,Id]' --output table
+awslocal acm list-certificates --region us-east-1 --output table
+echo ""
+echo "=== Access test content ==="
+echo "curl http://$BUCKET_NAME.s3-website.localhost.localstack.cloud:4566/"
+```
+
+Make it executable:
+
+```bash
+chmod +x scripts/exercise-local.sh
+```
+
+## Justfile Targets
+
+Add these to your project Justfile:
+
+```just
+# Start LocalStack
+local-up:
+    docker compose -f docker-compose.localstack.yml up -d
+
+# Stop LocalStack
+local-down:
+    docker compose -f docker-compose.localstack.yml down
+
+# Exercise all AWS resources locally
+local-exercise:
+    ./scripts/exercise-local.sh
+
+# Build docs and deploy to LocalStack S3
+local-deploy:
+    just docs-build-all
+    awslocal s3 sync ./aggregated-site/ s3://docspine-local/
+
+# Verify local resources
+local-verify:
+    @echo "=== S3 ==="
+    awslocal s3 ls s3://docspine-local/ --recursive
+    @echo "=== CloudFront ==="
+    awslocal cloudfront list-distributions --output table
+    @echo "=== Route53 ==="
+    awslocal route53 list-hosted-zones --output table
+    @echo "=== ACM ==="
+    awslocal acm list-certificates --region us-east-1 --output table
+```
+
+## Recommended Workflow
+
+```
+Local (LocalStack)                      Real AWS
+──────────────────                      ────────
+1. just local-up                        
+2. just local-exercise                  
+3. just local-verify                    
+4. Test Concourse tasks locally         
+5. ✅ Everything works                → 6. sst deploy --stage production
+                                      → 7. Concourse handles future deploys
+```
+
+## What Works in LocalStack Community (Free)
+
+| Service | Feature | Status |
+|---------|---------|--------|
+| S3 | Buckets, objects, static website hosting, policies | ✅ Full |
+| CloudFront | Basic distributions, S3 origin | ✅ Basic |
+| Route53 | Hosted zones, record management (API-level) | ✅ API only |
+| ACM | Certificate request/describe (mock validation) | ✅ Mock |
+| SSM | Parameter store | ✅ Full |
+| IAM | Roles, policies | ✅ Full |
+
+**What requires LocalStack Pro:**
+- Lambda@Edge (experimental in v4.3+)
+- Route53 DNS resolution via built-in DNS server
+- CloudFront custom domains with actual DNS
+
+For Docspine's purposes, Community edition is sufficient. The exercise script validates that every AWS resource can be created and configured correctly. The actual DNS resolution and CDN behavior are verified on first deploy to real AWS.
+
+## Cleanup
+
+```bash
+just local-down
+# Remove persisted data:
+docker volume rm docspine_localstack-data
+```

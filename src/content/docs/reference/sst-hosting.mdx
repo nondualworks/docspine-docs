@@ -1,0 +1,394 @@
+---
+title: SST for Static Hosting
+description: SST reference for platform engineers — what it creates, how it works, IAM, commands, troubleshooting
+---
+
+
+---
+
+## 1. What Is SST
+
+SST (Serverless Stack Toolkit) is an infrastructure-as-code framework for deploying to AWS. It sits in the same category as Terraform, Pulumi, and AWS CDK, but is designed for application developers rather than DevOps specialists.
+
+**Under the hood:** SST v3 uses Pulumi as its deployment engine, which in turn uses Terraform's AWS provider for resource management. You don't interact with Pulumi or Terraform directly — SST handles that. You write TypeScript in `sst.config.ts` and SST translates it to AWS resources.
+
+**What it replaces:** For our static site use case, SST replaces what would otherwise be ~50 lines of Terraform/Pulumi or 15 minutes of clicking in the AWS Console to set up S3 + CloudFront + ACM + Route53.
+
+**What it doesn't replace:** SST is not a general-purpose IaC tool. For complex infrastructure (EKS clusters, VPCs, RDS), we use Pulumi directly. SST excels at static sites, serverless APIs, and container services — anything that composes standard AWS patterns.
+
+---
+
+## 2. How SST Relates to Our Stack
+
+```
+Our IaC Landscape
+─────────────────────────────────────────
+│ Tool          │ Used For                │
+│───────────────│─────────────────────────│
+│ SST           │ Static sites (docs)     │
+│ Pulumi (TS)   │ EKS, RDS, VPC, IAM     │
+│ Kustomize     │ K8s manifests/overlays  │
+│ Concourse     │ CI/CD pipelines         │
+─────────────────────────────────────────
+```
+
+SST is scoped to one job: deploy and manage our federated docs site. It is not our general infrastructure tool.
+
+---
+
+## 3. What SST Creates in AWS
+
+When you run `sst deploy` for a StaticSite, SST creates these resources:
+
+### One-Time Bootstrap (Per Account/Region)
+
+These are created once, the first time anyone runs `sst deploy` in the AWS account. They're shared across all SST apps in that account.
+
+| Resource | Name Pattern | Purpose |
+|----------|-------------|---------|
+| S3 bucket | `sst-*` | Stores SST deployment state and assets |
+| ECR repository | `sst-*` | For Docker images (created but unused for static sites) |
+| SSM parameter | `/sst/*` | Metadata about bootstrap resources |
+
+### Per-App Resources (Our Docs Site)
+
+| Resource | Purpose | Monthly Cost |
+|----------|---------|-------------|
+| **S3 bucket** | Stores HTML, CSS, JS files from MkDocs builds | ~$0.02 |
+| **CloudFront distribution** | CDN — serves files globally with caching, terminates HTTPS | ~$0.85 (internal traffic) |
+| **ACM certificate** | TLS certificate for custom domain (must be in us-east-1) | Free |
+| **Route53 A-record** | Alias record pointing domain → CloudFront | $0.50/month (hosted zone) |
+| **CloudFront Function** | URL rewriting (trailing slashes, default index.html) | Negligible |
+| **IAM role** | Origin Access Control — lets CloudFront read from private S3 bucket | Free |
+
+**Total: ~$1.50/month**
+
+### What SST Does NOT Create
+
+SST's StaticSite touches only the services listed above. It will never create or modify: EC2 instances, VPCs, subnets, security groups, RDS databases, ECS/EKS clusters, DynamoDB tables, SQS/SNS queues, API Gateway, Lambda functions (except the small CloudFront Function for URL rewriting), Cognito, or any other AWS service.
+
+---
+
+## 4. Installation and Prerequisites
+
+### System Requirements
+
+- **Node.js 18+** (SST is a Node.js CLI tool)
+- **AWS CLI** configured with credentials
+- **Docker** (for LocalStack local development)
+
+### Install SST
+
+```bash
+# Option A: Global install
+npm install -g sst
+
+# Option B: Use npx (no install needed)
+npx sst@latest version
+```
+
+### Install LocalStack Tools (For Local Development)
+
+```bash
+# LocalStack CLI
+brew install localstack/tap/localstack
+
+# AWS CLI wrapper → LocalStack
+pip install awscli-local
+
+# Pulumi wrapper → LocalStack (optional, for debugging)
+pip install pulumi-local
+```
+
+---
+
+## 5. Project Structure
+
+Our docs aggregation SST project lives in the `docs-pipeline` repo:
+
+```
+docs-pipeline/
+├── sst.config.ts                     ← Infrastructure definition
+├── package.json                      ← Node.js project (SST dependency)
+├── tsconfig.json                     ← TypeScript config
+├── aggregated-site/                  ← Built HTML output (populated by Concourse)
+│   ├── index.html                    ← Landing page with Pagefind search
+│   ├── checkout/
+│   │   └── checkout-api/             ← Team A's MkDocs output
+│   ├── identity/
+│   │   └── auth-gateway/             ← Team B's MkDocs output
+│   └── _pagefind/                    ← Search index (generated at build time)
+├── ci/
+│   ├── pipeline.yml                  ← Concourse pipeline definition
+│   └── tasks/                        ← Concourse task configs
+├── docker/
+│   └── Dockerfile.builder            ← MkDocs + Material + Just build image
+├── docs-registry.yaml                ← List of repos to build
+├── scripts/
+│   ├── deploy-local.sh               ← Deploy to LocalStack
+│   ├── exercise-local.sh             ← Create AWS resources in LocalStack
+│   └── generate-landing-page.sh      ← Generate index.html from registry
+├── docker-compose.localstack.yml     ← LocalStack dev environment
+├── Justfile                          ← Project automation targets
+└── .sst/                             ← SST internal state (gitignored)
+```
+
+---
+
+## 6. The SST Config File
+
+```typescript
+/// <reference path="./.sst/platform/config.d.ts" />
+
+export default $config({
+  app(input) {
+    return {
+      name: "docs-aggregation",
+      // On 'sst remove': retain prod resources, delete non-prod
+      removal: input?.stage === "production" ? "retain" : "remove",
+      home: "aws",
+      providers: {
+        aws: {
+          // CloudFront requires ACM certs in us-east-1
+          region: "us-east-1",
+        },
+      },
+    };
+  },
+  async run() {
+    // The StaticSite component handles:
+    // - S3 bucket creation and file upload
+    // - CloudFront distribution with caching
+    // - ACM certificate request and validation
+    // - Route53 DNS record creation
+    // - Origin Access Control (CloudFront → S3)
+    const site = new sst.aws.StaticSite("DocsSite", {
+      // Directory containing built HTML files
+      path: "./aggregated-site",
+
+      // Custom domain (Route53 hosted zone must exist)
+      domain: "docs.yourcompany.com",
+
+      // Don't wait for cache invalidation in non-prod
+      // (speeds up deploy from ~5min to ~30sec)
+      // invalidation: false,  // uncomment for dev/staging
+    });
+
+    // Output the site URL for verification
+    return {
+      url: site.url,
+      domain: site.domain,
+    };
+  },
+});
+```
+
+### Key Configuration Points
+
+**`name`**: Prefix for all AWS resources SST creates. Our resources will be named `docs-aggregation-*`.
+
+**`removal`**: Controls what happens when you run `sst remove`. Set to `"retain"` in production so accidentally removing the stack doesn't delete the S3 bucket with all the docs.
+
+**`region`**: Must be `us-east-1` because CloudFront requires ACM certificates in that region. The S3 bucket and CloudFront are global/edge services, so region doesn't affect where content is served from.
+
+**`stage`**: SST supports multiple stages (like environments). We use `production` for the real site and `local` for LocalStack testing. Pass it via `sst deploy --stage production`.
+
+---
+
+## 7. IAM Permissions
+
+SST needs AWS credentials with specific permissions. We use a dedicated IAM role: `docs-pipeline-deployer`.
+
+### What the Role Needs Access To
+
+| Permission Group | Why |
+|-----------------|-----|
+| S3 (sst-* and docs-*) | Bootstrap state storage + docs content bucket |
+| CloudFront | Create/update CDN distribution |
+| ACM (us-east-1 only) | Request and manage TLS certificate |
+| Route53 (specific hosted zone) | Create DNS records pointing to CloudFront |
+| IAM (docs-* and sst-* roles) | Create service roles for CloudFront → S3 access |
+| Lambda (us-east-1, docs-* and sst-*) | CloudFront Function for URL rewriting |
+| SSM (sst/*) | Bootstrap metadata |
+| ECR (sst-*) | Bootstrap container registry (unused but created) |
+| IoT (DescribeEndpoint) | SST dev mode (not used in production deploys) |
+
+### The Policy
+
+The full IAM policy JSON is available in the repo at `iam/sst-docs-deployer-policy.json`. Before applying:
+
+1. Replace `REPLACE_ACCOUNT_ID` with your 12-digit AWS account number
+2. Replace `REPLACE_HOSTED_ZONE_ID` with your Route53 hosted zone ID
+
+### Tightening Permissions After First Deploy
+
+After the initial deploy and a week of operation:
+
+1. Go to **IAM → Access Analyzer → Policy generation**
+2. Select the `docs-pipeline-deployer` role
+3. Choose a CloudTrail trail covering the last 7 days
+4. Generate policy — produces the exact permissions SST actually used
+5. Replace the broad policy with the generated minimal one
+
+This gives you a provably minimal policy based on observed API calls.
+
+---
+
+## 8. Common Commands
+
+### Deploying
+
+```bash
+# Deploy to production (real AWS)
+AWS_PROFILE=docs-deployer npx sst deploy --stage production
+
+# Deploy to dev stage (real AWS, separate resources)
+AWS_PROFILE=docs-deployer npx sst deploy --stage dev
+
+# Preview what would change without deploying
+AWS_PROFILE=docs-deployer npx sst diff --stage production
+```
+
+### Inspecting
+
+```bash
+# Show deployed resources and outputs
+npx sst status --stage production
+
+# Show the site URL
+npx sst output --stage production
+```
+
+### Removing
+
+```bash
+# Remove non-production stage (deletes all resources)
+npx sst remove --stage dev
+
+# WARNING: Removing production will delete the S3 bucket
+# Our config sets removal: "retain" for production,
+# so S3 bucket is kept even on remove
+npx sst remove --stage production
+```
+
+### Local Development (with LocalStack)
+
+```bash
+# Start LocalStack
+just local-up
+
+# Exercise all AWS resources locally
+just local-exercise
+
+# Verify resources were created
+just local-verify
+
+# Stop LocalStack
+just local-down
+```
+
+---
+
+## 9. How SST Deploys (What Happens Under the Hood)
+
+When you run `sst deploy`, here's the sequence:
+
+```
+1. SST reads sst.config.ts
+      ↓
+2. Translates to Pulumi resource definitions
+      ↓
+3. Pulumi compares desired state vs current state (stored in S3 bootstrap bucket)
+      ↓
+4. Pulumi calls AWS APIs to create/update/delete resources:
+   a. S3: CreateBucket, PutObject (upload files)
+   b. ACM: RequestCertificate (if first deploy)
+   c. CloudFront: CreateDistribution or UpdateDistribution
+   d. Route53: ChangeResourceRecordSets (A-record alias)
+   e. CloudFront: CreateInvalidation (bust CDN cache)
+      ↓
+5. SST outputs the site URL
+```
+
+**First deploy** takes 5-10 minutes (CloudFront distribution creation is slow).
+
+**Subsequent deploys** take 1-3 minutes (S3 sync + cache invalidation).
+
+**File upload strategy**: SST syncs the `aggregated-site/` directory to S3, uploading only changed files. It sets appropriate `Cache-Control` headers: long cache for CSS/JS (hashed filenames), no cache for HTML.
+
+---
+
+## 10. Troubleshooting
+
+### "Certificate validation timed out"
+
+ACM certificate validation requires Route53 to have the correct CNAME record. If your domain's hosted zone isn't in Route53, you need to manually add the validation record at your DNS provider. SST will print the CNAME details.
+
+### "Access Denied" on deploy
+
+Check that your IAM role has all the permissions in the policy. Most common missing permission: `iam:PassRole` (needed for CloudFront to assume the S3 access role).
+
+### "CloudFront distribution is still deploying"
+
+CloudFront distributions take 5-15 minutes to deploy on first creation. SST waits by default. For non-production, you can skip the wait by adding `invalidation: false` to the StaticSite config.
+
+### "State file locked"
+
+If a previous deploy crashed, the Pulumi state file might be locked. Run:
+
+```bash
+npx sst unlock --stage production
+```
+
+### "Bootstrap failed"
+
+If SST can't create the bootstrap resources (usually first deploy in a new account/region), check that your IAM role has the `SSTBootstrap*` permissions. The bootstrap creates an S3 bucket, ECR repo, and SSM parameter prefixed with `sst-`.
+
+### Changes not visible after deploy
+
+CloudFront caches aggressively. SST creates a cache invalidation on deploy, but it can take 1-2 minutes to propagate. If urgent:
+
+```bash
+aws cloudfront create-invalidation \
+  --distribution-id YOUR_DIST_ID \
+  --paths "/*"
+```
+
+---
+
+## 11. SST vs Alternatives (Why We Chose SST for This)
+
+| Criteria | SST | Pulumi | Terraform | AWS Console |
+|----------|-----|--------|-----------|-------------|
+| Lines of code for static site | 5-10 | 40-60 | 50-80 | N/A (clicks) |
+| Language | TypeScript | TypeScript | HCL | N/A |
+| Handles S3+CF+ACM+R53 together | Yes (one component) | Manual wiring | Manual wiring | Manual |
+| Reproducible | Yes (IaC) | Yes | Yes | No |
+| Local testing (LocalStack) | Via Pulumi layer | Native | Via tflocal | No |
+| Learning curve | Low | Medium | Medium | Low (but not reproducible) |
+
+**We chose SST because** the StaticSite component does exactly what we need in 5 lines. For our other infrastructure (EKS, RDS, VPCs), we use Pulumi directly because SST's abstractions don't cover those use cases well.
+
+---
+
+## 12. Key Concepts Glossary
+
+| Term | What It Means |
+|------|--------------|
+| **Stage** | An isolated deployment environment (`production`, `dev`, `local`). Each stage gets its own AWS resources. |
+| **Bootstrap** | One-time setup SST performs per AWS account/region. Creates shared state storage. |
+| **Provider** | A cloud platform SST can deploy to (AWS, Cloudflare, Vercel). We use AWS. |
+| **Component** | A high-level SST resource like `StaticSite` that creates multiple AWS resources. |
+| **State** | Record of what resources SST has created. Stored in the bootstrap S3 bucket. Pulumi compares desired vs actual state on each deploy. |
+| **Removal policy** | What happens to AWS resources when you `sst remove`. `"remove"` deletes them; `"retain"` keeps them. |
+| **Invalidation** | Busting the CloudFront CDN cache so new content is served. SST does this automatically on deploy. |
+
+---
+
+## 13. Further Reading
+
+- [SST Documentation](https://sst.dev/docs/)
+- [SST StaticSite Component Reference](https://sst.dev/docs/component/aws/static-site/)
+- [SST IAM Credentials Guide](https://sst.dev/docs/iam-credentials/)
+- [LocalStack + Pulumi Integration](https://docs.localstack.cloud/user-guide/integrations/pulumi/)
+- [Pagefind Documentation](https://pagefind.app/docs/)

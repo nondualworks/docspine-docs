@@ -1,0 +1,32 @@
+site_name: Checkout API
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - How-To:
+      - Deploy: how-to/deploy.md
+  - Reference:
+      - API: reference/api.md
+  - Explanation:
+      - Architecture: explanation/architecture.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+strict: true

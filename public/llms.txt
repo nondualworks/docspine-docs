@@ -1,0 +1,21 @@
+# Docspine
+> A specification for federated documentation — by humans, for humans and machines.
+
+Docspine defines a two-file contract (docspine.yaml + Justfile) that lets teams author docs independently while a pipeline aggregates them under one searchable domain. Framework-agnostic, pipeline-agnostic, hosting-agnostic.
+
+## Core Documentation (Read First)
+- [Capability Overview](https://nondualworks.github.io/docspine/explanation/capability-overview/): What Docspine is, how it works, and the design decisions behind it
+- [Philosophy](https://nondualworks.github.io/docspine/explanation/philosophy/): Documentation-first development, nondual thinking, and why structure serves both humans and machines
+
+## Reference
+- [Manifest Schema](https://nondualworks.github.io/docspine/reference/manifest-schema/): The docspine.yaml contract — fields, types, validation, and registry schema
+- [Implementation Reference](https://nondualworks.github.io/docspine/reference/implementation/): Pipeline architecture, Concourse config, Docker image, and operational runbook
+- [SST for Static Hosting](https://nondualworks.github.io/docspine/reference/sst-hosting/): SST reference for S3 + CloudFront infrastructure
+
+## How-To Guides
+- [Register a Docs Microsite](https://nondualworks.github.io/docspine/how-to/register-microsite/): Step-by-step guide to add your team's docs in 5 minutes
+- [Local Development](https://nondualworks.github.io/docspine/how-to/local-development/): LocalStack setup for testing the full deploy flow
+
+## Optional
+- [Example: MkDocs Team Repo](https://github.com/nondualworks/docspine/tree/main/examples/mkdocs-team): Complete example with docspine.yaml, Justfile, and MkDocs site
+- [Example: Registry](https://github.com/nondualworks/docspine/tree/main/examples/registry): Example docs-registry.yaml

@@ -1,0 +1,327 @@
+---
+title: Register a Docs Microsite
+description: Step-by-step guide to add your team docs to the aggregated documentation site
+---
+
+
+---
+
+## What You Get
+
+Once you register your docs site, you get:
+
+- **Your docs live at** `docs.{company}.com/{domain}/{service}/`
+- **Auto-deploy on push** — change a file in `docs/`, push to `main`, and the site updates within 5 minutes
+- **Cross-service search** — users can search your docs alongside every other team's docs from a single search bar
+- **Zero infrastructure for you** — no S3 buckets, no CloudFront, no GitHub Pages config. We handle all of it.
+
+---
+
+## Prerequisites
+
+Before you start, confirm you have:
+
+- [ ] A Git repo with a `docs/` directory containing a MkDocs site (`mkdocs.yml` exists)
+- [ ] `just` (command runner) installed — [install guide](https://just.systems)
+- [ ] MkDocs installed locally for testing — `pip install mkdocs mkdocs-material`
+
+**Don't have MkDocs yet?** See "Starting from Scratch" at the bottom of this guide.
+
+---
+
+## Step 1: Add the Docs Manifest
+
+Create a file called `docspine.yaml` in your repo root:
+
+```yaml
+# docspine.yaml
+# Tells the docs aggregation pipeline about your service's documentation
+
+# Your team name (as it appears in your org)
+team: payments
+
+# The business domain this service belongs to
+# This determines the top-level URL path: docs.{company}.com/{domain}/{service}/
+# Use your DDD bounded context name, product area, or org unit
+domain: checkout
+
+# Your service name (lowercase, hyphenated)
+service: checkout-api
+
+# Display name shown in the docs landing page directory
+nav_title: Checkout API
+
+# Framework (only "mkdocs" is supported currently)
+framework: mkdocs
+
+# Where your MkDocs source files live (relative to repo root)
+source_dir: docs/
+
+# Where the built HTML output goes (relative to repo root)
+output_dir: site/
+```
+
+### Choosing Your Domain
+
+The `domain` field groups your docs on the site. Choose based on what makes sense for people browsing:
+
+| If your team works on... | domain might be... |
+|--------------------------|-------------------|
+| Payment processing | `checkout` |
+| User auth and SSO | `identity` |
+| Shared infrastructure | `platform` |
+| Data pipelines | `data` |
+| Mobile apps | `mobile` |
+
+If you're unsure, use your team name. We can reorganize later without you changing anything.
+
+---
+
+## Step 2: Add the Justfile
+
+Create a file called `Justfile` in your repo root (no extension):
+
+```just
+# Justfile — standard docs build targets
+# These targets are called by the aggregation pipeline
+
+# Build static HTML output to site/
+docs-build:
+    cd docs && mkdocs build --site-dir ../site
+
+# Serve locally for development (http://localhost:8000)
+docs-serve:
+    cd docs && mkdocs serve --dev-addr 0.0.0.0:8000
+
+# Validate docs — strict mode fails on warnings (broken links, etc.)
+docs-check:
+    cd docs && mkdocs build --strict --site-dir ../site
+```
+
+### If your MkDocs setup is different
+
+If your `mkdocs.yml` isn't in a `docs/` subdirectory, or your build command is different, adjust the Justfile accordingly. The pipeline only calls `just docs-build` and expects HTML output in the `output_dir` specified in your manifest.
+
+**Example: MkDocs at repo root**
+```just
+docs-build:
+    mkdocs build --site-dir site
+
+docs-serve:
+    mkdocs serve --dev-addr 0.0.0.0:8000
+
+docs-check:
+    mkdocs build --strict --site-dir site
+```
+
+**Example: Custom MkDocs plugins that need npm**
+```just
+docs-build:
+    cd docs && pip install -r requirements.txt && mkdocs build --site-dir ../site
+
+docs-serve:
+    cd docs && pip install -r requirements.txt && mkdocs serve --dev-addr 0.0.0.0:8000
+
+docs-check:
+    cd docs && pip install -r requirements.txt && mkdocs build --strict --site-dir ../site
+```
+
+---
+
+## Step 3: Verify Locally
+
+Before registering, make sure your docs build cleanly:
+
+```bash
+# Install just if you haven't
+# macOS:
+brew install just
+# Linux:
+curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+
+# Build your docs
+just docs-build
+
+# Check the output
+ls site/
+# Should contain: index.html, css/, js/, and your content
+
+# Serve locally and verify in your browser
+just docs-serve
+# Open http://localhost:8000
+
+# Run strict validation (catches broken links and warnings)
+just docs-check
+```
+
+If `just docs-check` shows warnings, fix them before registering. The pipeline runs in strict mode — builds that produce warnings will fail.
+
+---
+
+## Step 4: Register Your Repo
+
+Open a pull request against the `docs-pipeline` repo to add your entry to `docs-registry.yaml`:
+
+```yaml
+# Add this block to docs-registry.yaml
+- url: git@github.com:{org}/{your-repo}.git
+  team: payments                    # match your manifest
+  domain: checkout                  # match your manifest
+  service: checkout-api             # match your manifest
+  branch: main                      # branch to watch
+  docs_path: .                      # where docspine.yaml lives
+                                    # use "." for repo root, "docs/" if nested
+```
+
+Once the PR is merged, the pipeline picks up your repo on its next run.
+
+---
+
+## Step 5: Verify Your Live Docs
+
+After the pipeline runs (typically within 5 minutes of the registry merge):
+
+1. Visit `docs.{company}.com` — your service should appear in the directory
+2. Visit `docs.{company}.com/{domain}/{service}/` — your full docs site
+3. Try the search bar — search for a term you know is in your docs
+
+If your docs don't appear after 10 minutes, check the `#platform-engineering` Slack channel for build failure notifications, or ping us directly.
+
+---
+
+## What Happens Next (Automatically)
+
+After registration, every push to your `main` branch that changes files in your `docs/` directory (or `docspine.yaml` or `Justfile`) will trigger:
+
+1. Concourse detects the change via webhook
+2. Your repo is cloned
+3. `just docs-check` runs (strict validation)
+4. `just docs-build` runs (generates HTML)
+5. Output is copied to `{domain}/{service}/` in the aggregated S3 bucket
+6. CloudFront cache is invalidated
+7. Search index is regenerated to include your updated content
+8. Slack notification: ✅ build succeeded or ❌ build failed
+
+**You don't need to do anything.** Edit your docs, push, and they're live.
+
+---
+
+## FAQ
+
+### Can I use a custom MkDocs theme?
+
+Yes. The pipeline runs `just docs-build` inside a container with MkDocs Material pre-installed, but your `mkdocs.yml` can specify any theme. If you need additional MkDocs plugins not included in the base image, add a `requirements.txt` in your `docs/` directory and update your Justfile to `pip install -r requirements.txt` before building.
+
+### What if my build needs npm packages?
+
+Add the install step to your Justfile `docs-build` target. The build container has Node.js available:
+
+```just
+docs-build:
+    cd docs && npm ci && mkdocs build --site-dir ../site
+```
+
+### Can I preview changes before they go live?
+
+Yes — `just docs-serve` runs MkDocs locally at `http://localhost:8000` with live reload. This is the same content that will be deployed.
+
+### What if my build fails?
+
+You'll see a Slack notification in `#platform-engineering` with the error. Common causes:
+
+| Error | Fix |
+|-------|-----|
+| `just: command not found` | Add a `Justfile` to your repo root |
+| `mkdocs: command not found` | The pipeline container has MkDocs — this usually means your Justfile has a path issue |
+| `WARNING - Doc file ... contains a link to ... which is not found` | Fix the broken link. The pipeline runs in strict mode. |
+| `docspine.yaml not found` | Ensure the file is at the path specified in `docs_path` in the registry |
+
+### Can I use Docusaurus or Astro instead of MkDocs?
+
+Not yet. The current pipeline supports MkDocs only. Multi-framework support (Astro/Starlight, Docusaurus, Hugo) is planned for a future cycle. The good news: the manifest + Justfile contract is framework-agnostic, so when support is added, you'll only need to update your `Justfile` build commands — no manifest changes.
+
+### How do I remove my docs from the site?
+
+Open a PR to remove your entry from `docs-registry.yaml`. Your docs will be removed from the aggregated site on the next pipeline run.
+
+### Can I change my domain grouping later?
+
+Yes. Update the `domain` field in your `docspine.yaml` and the corresponding entry in `docs-registry.yaml`. The pipeline will move your docs to the new URL path on the next build.
+
+### How does search work?
+
+We use Pagefind, a static search library that indexes all HTML content at deploy time. It searches across every registered service's docs from a single search bar on the landing page. No server, no API keys, no cost — it's a static JavaScript file served alongside your docs.
+
+### Is the site public or internal-only?
+
+This depends on your organization's configuration. Check with the PE team. The site can be restricted to VPN/internal network via CloudFront IP restrictions, or made publicly accessible.
+
+---
+
+## Starting from Scratch (No MkDocs Yet)
+
+If your service doesn't have documentation yet, here's the quickest path:
+
+```bash
+# 1. Create the docs directory
+mkdir -p docs/docs
+cd docs
+
+# 2. Initialize MkDocs with Material theme
+cat > mkdocs.yml << 'EOF'
+site_name: Your Service Name
+theme:
+  name: material
+  palette:
+    scheme: default
+nav:
+  - Home: index.md
+  - Reference: reference.md
+  - How-To Guides: how-to.md
+EOF
+
+# 3. Create starter pages
+cat > docs/index.md << 'EOF'
+# Your Service Name
+
+Welcome to the documentation for Your Service.
+
+## Overview
+
+Brief description of what this service does and why it exists.
+
+## Quick Start
+
+How to get up and running with this service.
+EOF
+
+cat > docs/reference.md << 'EOF'
+# API Reference
+
+Document your service's API, configuration, and interfaces here.
+EOF
+
+cat > docs/how-to.md << 'EOF'
+# How-To Guides
+
+Step-by-step guides for common tasks.
+EOF
+
+cd ..
+
+# 4. Add the manifest and Justfile (see Steps 1 and 2 above)
+
+# 5. Test it
+just docs-serve
+# Open http://localhost:8000
+```
+
+This gives you a minimal MkDocs Material site with a Diataxis-inspired structure (overview, reference, how-to). You can build it out over time.
+
+---
+
+## Need Help?
+
+- **Slack:** `#platform-engineering`
+- **Pipeline repo:** `github.com/{org}/docs-pipeline`
+- **SST reference guide:** Ask PE team for the SST Reference Guide if you want to understand the infrastructure

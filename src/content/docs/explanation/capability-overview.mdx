@@ -1,0 +1,229 @@
+---
+title: Capability Overview
+description: What Docspine is, how it works, and the design decisions behind it
+---
+
+---
+
+## What It Is
+
+Docspine is a pattern where teams author documentation independently in their own repositories, using their preferred framework, while a central pipeline aggregates and hosts all documentation under a single domain with unified search.
+
+Teams own their docs. The platform owns discoverability.
+
+```
+Team repos (author independently)  →  Aggregation pipeline  →  Single docs domain
+```
+
+The result: `docs.{company}.com` serves every team's documentation, searchable across all services, updated automatically when any team pushes a change.
+
+---
+
+## The Problem It Solves
+
+In organizations with more than a handful of services, documentation scatters across:
+
+- Individual GitHub Pages sites nobody can find
+- Confluence pages that drift from reality
+- READMEs that only cover setup, not operations
+- Wikis attached to specific tools (Grafana, ArgoCD) with no cross-linking
+- Local builds that never get deployed
+
+The consequences are real. Engineers waste time hunting for context. Auditors can't locate compliance documentation. New hires take weeks to find their footing. Leadership has no visibility into what documentation exists or its quality.
+
+The root cause isn't that teams don't write docs — many do. It's that there's no single place to find them and no automated path from "docs updated in repo" to "docs live and searchable."
+
+---
+
+## How It Works
+
+### The Contract
+
+Each team's repository provides two files that form the interface between their docs and the aggregation pipeline:
+
+**A manifest file** (`docspine.yaml`) declares metadata about the documentation:
+
+```yaml
+team: payments              # Who owns this (for notifications, attribution)
+domain: checkout            # Business domain (for URL grouping)
+service: checkout-api       # Service identifier
+nav_title: Checkout API     # Display name in the directory
+framework: mkdocs           # What generates the docs
+source_dir: docs/           # Where the source lives
+output_dir: site/           # Where the built HTML goes
+```
+
+**A Justfile** exposes three standard build targets:
+
+```just
+docs-build:     # Build static HTML
+docs-serve:     # Serve locally for development
+docs-check:     # Validate (strict mode — fail on warnings)
+```
+
+The implementation behind these targets varies by framework. An MkDocs team runs `mkdocs build`. An Astro team runs `npm run build`. A Docusaurus team runs `npx docusaurus build`. The pipeline doesn't care — it calls `just docs-build` and expects HTML output in `output_dir`.
+
+### The Pipeline
+
+A CI/CD pipeline (Concourse, GitHub Actions, or any automation tool) performs these steps:
+
+1. **Watch** registered repos for changes to docs source files
+2. **Clone** the repo and validate the manifest and Justfile exist
+3. **Build** by running `just docs-check` then `just docs-build` inside a container with the appropriate framework tools
+4. **Copy** the built HTML to the correct path in the aggregated output directory
+5. **Deploy** the aggregated directory to static hosting (S3 + CDN)
+6. **Index** all content for cross-service search
+7. **Notify** the owning team on success or failure
+
+### The Hosting
+
+All docs are served from a single domain under a path structure organized by business domain:
+
+```
+docs.{company}.com/
+├── checkout/
+│   └── checkout-api/        ← Payments team's docs
+├── identity/
+│   └── auth-gateway/        ← Identity team's docs
+├── platform/
+│   ├── notification-worker/
+│   └── base-images/
+└── index.html               ← Landing page + unified search
+```
+
+Search is powered by Pagefind, a static search library that builds an index at deploy time. No search server, no API, no cost. Users search across all services from one search bar.
+
+---
+
+## Design Decisions
+
+### Why Business Domain Grouping (Not Team)
+
+The URL structure uses `domain` (DDD bounded context / product area) rather than `team` because documentation consumers think in terms of "I need checkout docs," not "I need the payments team's docs." Team names change with reorgs; business domains are more stable.
+
+Both `team` and `domain` are captured in the manifest. The aggregation pipeline can switch between grouping strategies (domain-first, team-first, flat) by changing one routing configuration. Teams don't change anything.
+
+### Why Framework-Agnostic
+
+The contract (manifest + Justfile) deliberately does not prescribe a documentation framework. Teams can use MkDocs, Astro/Starlight, Docusaurus, Hugo, Sphinx, or any static site generator. The pipeline only needs:
+
+1. A way to know what to build (manifest)
+2. A way to build it (Justfile with standard targets)
+3. HTML output in a known directory
+
+This avoids the Backstage problem — Backstage's TechDocs locks teams into MkDocs with a specific plugin chain. Teams with existing Docusaurus or Astro sites cannot participate without migrating. Our approach includes everyone.
+
+In practice, most teams start with MkDocs Material (it's the default scaffold) and some teams will use Astro Starlight for richer documentation experiences. Both produce clean HTML that Pagefind indexes identically.
+
+### Why Justfile (Not Direct Build Commands)
+
+The Justfile provides indirection between the pipeline and the build tool. Benefits:
+
+- **Pipeline stability**: The pipeline always calls `just docs-build`, regardless of what's behind it. If a team switches from MkDocs to Astro, they update their Justfile — the pipeline doesn't change.
+- **Local development parity**: Engineers run the same `just docs-serve` locally that the pipeline runs in CI.
+- **Validation built in**: `just docs-check` runs strict mode, catching broken links and warnings before deploy.
+- **Tool-agnostic**: Just is a simple command runner with no framework opinions. It works with any language, any build tool, any OS.
+
+### Why Static Hosting (Not a Docs Server)
+
+Static site hosting (S3 + CDN) rather than a running server (nginx, Express) because:
+
+- **Cost**: Essentially free at internal documentation scale ($1-3/month)
+- **Reliability**: No process to crash, no memory leaks, no OOM kills
+- **Performance**: CDN edge caching means docs load instantly worldwide
+- **Security surface**: No running code, no attack vectors beyond misconfigured S3 policies
+- **Operational burden**: Zero. No monitoring, no scaling, no patching
+
+### Why a Registry File (Not Auto-Discovery)
+
+The initial implementation uses a manually maintained registry (`docs-registry.yaml`) rather than auto-scanning the GitHub org for repos containing `docspine.yaml`. This is deliberate:
+
+- **Explicit is better than implicit**: Teams opt in by opening a PR. No surprise builds.
+- **Control**: PE team reviews what's being added to the shared domain.
+- **Simplicity**: A YAML file is easier to debug than a GitHub API scanner with rate limits and token management.
+
+Auto-discovery is a natural evolution once the pattern proves out with 10+ repos.
+
+---
+
+## Organizational Flexibility
+
+The manifest schema supports multiple organizational models:
+
+**Domain-driven (recommended)**:
+```
+docs.{company}.com/{domain}/{service}/
+→ /checkout/checkout-api/
+→ /checkout/payment-gateway/
+→ /identity/auth-gateway/
+```
+
+**Team-based**:
+```
+docs.{company}.com/{team}/{service}/
+→ /payments/checkout-api/
+→ /payments/payment-gateway/
+→ /identity/auth-gateway/
+```
+
+**Flat (service-only)**:
+```
+docs.{company}.com/{service}/
+→ /checkout-api/
+→ /payment-gateway/
+→ /auth-gateway/
+```
+
+Switching between these requires changing the aggregation pipeline's routing config — one line. No team changes their manifest, Justfile, or docs content.
+
+---
+
+## Cross-Service Search
+
+Pagefind is a static search library (MIT licensed, free for all use) that runs at deploy time against the aggregated HTML output. It generates a JavaScript + WebAssembly search index that ships alongside the docs.
+
+Key properties:
+
+- **Framework-agnostic**: Indexes HTML output, not source. Works identically across MkDocs, Astro, Docusaurus, or any generator.
+- **No infrastructure**: No Elasticsearch, no Algolia, no Meilisearch. The index is static files served from the same S3 bucket.
+- **Bandwidth-efficient**: Pagefind loads only the index fragments needed for each query, not the entire corpus. Designed to perform well on sites with thousands of pages.
+- **Automatic**: `pagefind --site ./aggregated-site` at deploy time. No configuration for typical use.
+
+The landing page at `docs.{company}.com/` includes the Pagefind search widget, enabling users to search across all registered services from one place.
+
+---
+
+## The AI Multiplier
+
+A single docs domain per organization creates a natural MCP (Model Context Protocol) endpoint for AI agents. When all service documentation lives under one searchable domain:
+
+- AI coding assistants can query `docs.{company}.com` to find API references, operational runbooks, and architectural decisions
+- Diataxis-structured content (tutorials, how-to guides, reference, explanation) is machine-readable by convention
+- RAG (Retrieval-Augmented Generation) pipelines have a clean, authoritative corpus to index
+
+This is not a feature we build — it's a structural property of having all docs in one place with consistent structure. The aggregation pipeline creates the conditions; AI tools consume them.
+
+---
+
+## Relationship to Documentation Culture
+
+This capability is infrastructure, not culture. It solves the "where do docs live and how do people find them" problem. It does not solve the "teams don't write docs" problem.
+
+However, reducing the friction between writing and publishing — from "set up GitHub Pages, configure DNS, manage deploys" to "add two files, open a PR" — removes a genuine barrier. When publishing is trivial, more teams publish.
+
+The `docs-check` strict validation also nudges quality upward. Broken links, missing pages, and build warnings are caught in CI rather than silently deployed. This is a gentle quality gate, not a compliance hammer.
+
+---
+
+## Implementation Considerations
+
+The capability requires:
+
+- **A CI/CD system** to run the build pipeline (Concourse, GitHub Actions, GitLab CI, Jenkins — any will work)
+- **Static hosting** for the aggregated output (AWS S3 + CloudFront, Cloudflare Pages, Netlify, Vercel — any static host)
+- **A container image** with docs framework tools pre-installed (MkDocs + Material as the baseline)
+- **DNS** for the custom domain
+
+The infrastructure is simple and cheap. The ongoing operational cost is near zero — the pipeline runs on push, static hosting has no servers to manage, and teams self-service their own docs.
+
+Detailed implementation guides (pipeline configuration, hosting setup, IAM policies, local development) are maintained separately as reference and tutorial documentation.
