@@ -1,0 +1,32 @@
+site_name: Auth Gateway
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - How-To:
+      - Authenticate a Request: how-to/authenticate.md
+  - Reference:
+      - API: reference/api.md
+  - Explanation:
+      - Design: explanation/design.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+strict: true

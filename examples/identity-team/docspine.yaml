@@ -1,0 +1,7 @@
+team: identity
+domain: identity
+service: auth-gateway
+nav_title: Auth Gateway
+framework: mkdocs
+source_dir: docs/
+output_dir: site/
