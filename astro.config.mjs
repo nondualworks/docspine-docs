@@ -3,13 +3,13 @@ import starlight from '@astrojs/starlight';
 
 export default defineConfig({
   site: 'https://nondualworks.github.io',
-  base: '/docspine',
+  base: '/docspine-docs',
   integrations: [
     starlight({
       title: 'Docspine',
       description: 'A specification for federated documentation — by humans, for humans and machines.',
       social: [
-        { icon: 'github', label: 'GitHub', href: 'https://github.com/nondualworks/docspine' },
+        { icon: 'github', label: 'GitHub', href: 'https://github.com/nondualworks/docspine-docs' },
       ],
       sidebar: [
         {
